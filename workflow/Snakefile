@@ -109,7 +109,7 @@ rule stringtie_assemble_count_matrix:
 		transcript_cm=f"{OUTPUT_BASE}/cms_raw/transcript_count_matrix.txt",
 		gene_cm=f"{OUTPUT_BASE}/cms_raw/gene_count_matrix.txt"
 
-	shell: #  custom prepDE to address the long-known but never fixed bug in stringtie.
+	shell: #  custom prepDE to address the long-known but never fixed bug in stringtie that adds the class 'str' counts and breaks certain types of analysis.
 		f"""
 		prepDE.fixed.py3 -i {OUTPUT_BASE}/ballgown -g {{output.gene_cm}} -t {{output.transcript_cm}} 
 		"""

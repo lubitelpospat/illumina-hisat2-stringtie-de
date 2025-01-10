@@ -1,0 +1,132 @@
+---
+title: "Differential Expression Analysis"
+output: html_notebook
+---
+
+# Notebook for differential expression analysis of pig data
+
+```{r loading-libraries}
+suppressMessages(library(DESeq2))
+suppressMessages(library(plotly))
+suppressMessages(require(tidyverse))
+suppressMessages(library(pheatmap))
+library(ensembldb)
+library("pheatmap")
+library(umap)
+library(plotly)
+library(tximport)
+suppressMessages(library("IHW"))
+suppressMessages(library(edgeR))
+suppressPackageStartupMessages(library("tximeta"))
+library("DEGreport")
+library("gplots")
+```
+
+
+
+# Analyzing stringtie data
+
+```{r importing stringtie data}
+
+ctxFile <- "cms_raw/gene_count_matrix.txt"
+annoFile <- "annotation.csv"
+cts <- as.matrix(read.csv(ctxFile,row.names="gene_id"))
+coldata <- read.csv(annoFile, row.names=1)
+coldata$Condition <- as.factor(coldata$Condition)
+cts <- cts[, rownames(coldata)]
+rownames(cts) <- gsub("\\|.*", "", rownames(cts))
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = coldata,
+                              design = ~ Condition)
+dds <- DESeq(dds)
+res <- results(dds, alpha=0.05)
+summary(res)
+
+```
+
+```{r}
+res_stringtie_df <- as.data.frame(res) %>% dplyr::filter(!is.na(padj)) %>% dplyr::filter(padj < 0.05) %>% dplyr::arrange(padj)
+
+```
+
+
+
+
+```{r}
+library("TxDb.Hsapiens.UCSC.hg38.knownGene")
+```
+
+
+
+# Utilizing tximport pipeline
+
+Following the vignette https://bioconductor.org/packages/devel/bioc/vignettes/tximport/inst/doc/tximport.html
+```{r creating-tx2gene-object}
+library(ensembldb)
+library(EnsDb.Hsapiens.v86)
+tx <- transcripts(EnsDb.Hsapiens.v86, return.type="DataFrame")
+
+tx2gene <- tx[c("tx_id", "gene_id")]
+colnames(tx2gene) <- c("TXNAME","GENEID")
+head(tx2gene)
+```
+
+
+## Batch1 analysis
+### map-ont mapping preset
+
+```{r importing-salmon-data}
+files <- file.path("output-salmon/", rownames(coldata), "quant.sf")
+names(files) <- rownames(coldata)
+
+
+
+txi <- tximport(files, type = "salmon", tx2gene = tx2gene,ignoreTxVersion = T)
+
+
+
+```
+#### DESeq2 analysis
+
+```{r deseq2-analysis}
+dds<- DESeqDataSetFromTximport(txi,
+                                       colData=coldata,
+                                        design = ~ Condition)
+
+
+cds<- DESeq(dds);
+
+de<- results(cds, alpha = 0.05);
+summary(de)
+```
+
+
+```{r}
+res_salmon_df <- as.data.frame(de) %>% dplyr::filter(!is.na(padj)) %>% dplyr::filter(padj < 0.05) %>% dplyr::arrange(padj)
+```
+
+# Exporting results to CSVs
+
+
+```{r}
+library(openxlsx)
+
+
+wb <- createWorkbook()
+
+# Add the first sheet
+addWorksheet(wb, "Stringtie")
+writeData(wb, sheet = "Stringtie", res_stringtie_df %>% dplyr::select(log2FoldChange,padj) %>% rownames_to_column() %>% dplyr::rename(gene_id=rowname) )
+
+# Add the second sheet
+addWorksheet(wb, "Salmon")
+writeData(wb, sheet = "Salmon", res_salmon_df %>% dplyr::select(log2FoldChange,padj) %>% rownames_to_column() %>% dplyr::rename(gene_id=rowname))
+
+# Save the workbook to an Excel file
+saveWorkbook(wb, file = "de-results.xlsx", overwrite = TRUE)
+```
+
+
