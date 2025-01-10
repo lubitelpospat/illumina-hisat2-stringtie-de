@@ -1,0 +1,4 @@
+output_base: "output"
+sample_config: "config/example-samples.csv"
+annotation: "/path/to/annotation.gtf"
+reference: "/path/to/genomic.fa"

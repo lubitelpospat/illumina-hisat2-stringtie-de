@@ -1,0 +1,129 @@
+import pandas as pd
+import pathlib
+from snakemake.utils import min_version
+
+min_version("8.24.1")
+
+samples = pd.read_csv(config["sample_config"])
+
+OUTPUT_BASE = config["output_base"]
+
+sample_name_to_samples_mapping = dict()
+for _, row in samples.iterrows(): # constructing a mapping between sample names and all sample locations
+	sname = str(row["Name"])
+	left = row["Left"]
+	right = row["Right"]
+	sample_name_to_samples_mapping[sname] = {"left": left, "right": right}
+    
+sample_names = list(map(str, sample_name_to_samples_mapping.keys()))
+
+
+def get_paths_from_wildcards_with_sample_name(wildcards):
+	return sample_name_to_samples_mapping[wildcards.sample_name]
+
+rule fastqc:
+	input:
+		unpack(get_paths_from_wildcards_with_sample_name),
+	output:
+		directory(f"{OUTPUT_BASE}/fastqc/{{sample_name}}")
+	shell:
+		"""
+		[ ! -d {output} ] && mkdir -p {output}
+		fastqc {input.left} {input.right} -o {output}
+		"""
+	
+
+
+rule hisat2_build:
+	input:
+		fasta=config["reference"]
+	output:
+		directory(f"{OUTPUT_BASE}/hisat2_index")
+	threads: 16
+	
+	shell:
+		"""
+		[ ! -d {output} ] && mkdir -p {output}
+		hisat2-build {input.fasta} {output}/genome
+		"""
+
+
+rule hisat2_align:
+	input:
+		unpack(get_paths_from_wildcards_with_sample_name),
+		reference=F"{OUTPUT_BASE}/hisat2_index"
+
+	output:
+		bam=temp(f"{OUTPUT_BASE}/bam/{{sample_name}}.bam"),
+		summary=f"{OUTPUT_BASE}/hisat2Summary/{{sample_name}}.txt",
+
+
+	conda:
+		"envs/hisat2.yaml"
+	threads: 8
+
+	shell:
+		"""
+		hisat2 -p {threads} --new-summary --summary-file {output.summary} -x {input.reference}/genome -1 {input.left} -2 {input.right} | samtools view -bh -o {output.bam} 
+		"""
+
+
+rule sort_bam:
+	input:
+		f"{OUTPUT_BASE}/bam/{{sample_name}}.bam"
+	output:
+		f"{OUTPUT_BASE}/bam/{{sample_name}}.sorted.bam"
+	params:
+		"-m 4G"
+	threads: 8
+	wrapper:
+		"v5.5.0/bio/samtools/sort"
+
+rule index_bam:
+	input:
+		f"{OUTPUT_BASE}/bam/{{sample_name}}.sorted.bam"
+	output:
+		f"{OUTPUT_BASE}/bam/{{sample_name}}.sorted.bam.bai"
+	params:
+		"" # Should I set any params here?
+	wrapper:
+		"v5.5.0/bio/samtools/index"
+	
+rule stringtie_ballgown:
+	input: 
+		anno=config["annotation"],
+		bam=f"{OUTPUT_BASE}/bam/{{sample_name}}.sorted.bam",
+		bai=f"{OUTPUT_BASE}/bam/{{sample_name}}.sorted.bam.bai"
+
+	output:
+		f"{OUTPUT_BASE}/ballgown/{{sample_name}}/{{sample_name}}.gtf"
+	threads: 8
+
+	shell: "stringtie -e -B -p {threads} -G {input.anno} -o {output} {input.bam}"
+    
+rule stringtie_assemble_count_matrix:
+	input: 
+		gtf=expand(f"{OUTPUT_BASE}/ballgown/{{sample_name}}/{{sample_name}}.gtf", sample_name=sample_names)
+
+	output:
+		transcript_cm=f"{OUTPUT_BASE}/cms_raw/transcript_count_matrix.txt",
+		gene_cm=f"{OUTPUT_BASE}/cms_raw/gene_count_matrix.txt"
+
+	shell:
+		f"""
+		prepDE.fixed.py3 -i {OUTPUT_BASE}/ballgown -g {{output.gene_cm}} -t {{output.transcript_cm}} 
+		"""
+
+
+
+
+rule all:
+	localrule: True
+	default_target: True
+	input:
+		f"{OUTPUT_BASE}/cms_raw/transcript_count_matrix.txt",
+		f"{OUTPUT_BASE}/cms_raw/gene_count_matrix.txt",
+		expand(f"{OUTPUT_BASE}/fastqc/{{sample_name}}", sample_name=sample_names)
+
+
+        

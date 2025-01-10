@@ -1,0 +1,5 @@
+Name,Left,Right
+sample1,/path/to/sample1_R1.fastq,/path/to/sample1_R2.fastq
+sample2,/path/to/sample2_R1.fastq,/path/to/sample2_R2.fastq
+sample3,/path/to/sample3_R1.fastq,/path/to/sample3_R2.fastq
+
